@@ -10,8 +10,21 @@ import zipfile
 # Vercel entrypoint for the recovered Easy Soko application.
 ROOT = Path(__file__).resolve().parent
 RECOVERY_DIR = ROOT / "recovery"
+REPAIR_DIR = ROOT / "repair"
 RUNTIME_DIR = Path("/tmp/easysoko_runtime")
 READY_MARKER = RUNTIME_DIR / ".ready"
+
+# These four chunks were damaged during the original GitHub transfer.
+# Verified replacement halves are stored under repair/.
+REPAIRED_CHUNKS = {"04", "05", "06", "08"}
+
+
+def _read_chunk(number):
+    if number in REPAIRED_CHUNKS:
+        first = (REPAIR_DIR / f"{number}a").read_text(encoding="utf-8").strip()
+        second = (REPAIR_DIR / f"{number}b").read_text(encoding="utf-8").strip()
+        return first + second
+    return (RECOVERY_DIR / f"chunk{number}").read_text(encoding="utf-8").strip()
 
 
 def _restore_recovered_project():
@@ -24,17 +37,22 @@ def _restore_recovered_project():
         shutil.rmtree(RUNTIME_DIR)
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
-    chunks = sorted(RECOVERY_DIR.glob("chunk*"))
-    if len(chunks) != 12:
+    chunks = [_read_chunk(f"{i:02d}") for i in range(12)]
+    expected_lengths = [8000] * 11 + [388]
+    actual_lengths = [len(chunk) for chunk in chunks]
+
+    if actual_lengths != expected_lengths:
         raise RuntimeError(
-            f"Easy Soko recovery payload is incomplete: expected 12 chunks, found {len(chunks)}"
+            f"Easy Soko recovery payload has invalid chunk lengths: {actual_lengths}"
         )
 
-    encoded = "".join(chunk.read_text(encoding="utf-8").strip() for chunk in chunks)
+    encoded = "".join(chunks)
     archive_bytes = base64.b64decode(encoded, validate=True)
 
     with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
-        archive.testzip()
+        bad_file = archive.testzip()
+        if bad_file is not None:
+            raise RuntimeError(f"Recovered archive contains a corrupt file: {bad_file}")
         archive.extractall(RUNTIME_DIR)
 
     if not app_file.exists():
@@ -58,8 +76,8 @@ spec.loader.exec_module(module)
 # Vercel detects this top-level Flask object.
 app = module.app
 
-# Initialize a temporary SQLite database for the deployed demo.
-# Persistent production data should later be moved to PostgreSQL.
+# The recovered app currently uses SQLite. Vercel's filesystem is ephemeral,
+# so this is suitable only for the deployed demo until PostgreSQL is added.
 try:
     with app.app_context():
         module.db.create_all()
