@@ -89,6 +89,106 @@ _new_new_item = "image_url=final_image_url, \n            seller_id=current_user
 if _old_new_item in _source:
     _source = _source.replace(_old_new_item, _new_new_item, 1)
 
+# Keep normal users authenticated across navigation.
+_source = _source.replace(
+    "from datetime import datetime",
+    "from datetime import datetime, timedelta",
+    1,
+)
+
+_old_secret = "app.secret_key = os.environ.get('EASY_SOKO_SECRET_KEY', 'dev-change-this-secret')"
+_new_secret = """app.secret_key = os.environ.get('EASY_SOKO_SECRET_KEY', 'dev-change-this-secret')
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = bool(os.environ.get('VERCEL'))
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=30)
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
+app.config['REMEMBER_COOKIE_SECURE'] = bool(os.environ.get('VERCEL'))"""
+if _old_secret in _source:
+    _source = _source.replace(_old_secret, _new_secret, 1)
+
+_old_loader = """@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))"""
+_new_loader = """@login_manager.user_loader
+def load_user(user_id):
+    try:
+        return db.session.get(User, int(user_id))
+    except (TypeError, ValueError):
+        return None"""
+if _old_loader in _source:
+    _source = _source.replace(_old_loader, _new_loader, 1)
+
+_old_login = """@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        user = User.query.filter_by(username=username).first()
+        if user and user.password == password:
+            login_user(user)
+            return redirect(url_for('dashboard'))
+        flash('Invalid credentials')
+    return render_template('login.html')"""
+
+_new_login = """@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+
+    if request.method == 'POST':
+        identity = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+
+        user = User.query.filter(
+            (db.func.lower(User.username) == identity.lower()) |
+            (db.func.lower(User.email) == identity.lower())
+        ).first()
+
+        if user and user.password == password:
+            login_user(user, remember=True, duration=timedelta(days=30), fresh=True)
+            session.permanent = True
+            session.modified = True
+            return redirect(url_for('dashboard'))
+
+        flash('Invalid username/email or password.')
+
+    return render_template('login.html')"""
+if _old_login in _source:
+    _source = _source.replace(_old_login, _new_login, 1)
+
+_old_signup_start = """@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':"""
+_new_signup_start = """@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+
+    if request.method == 'POST':"""
+if _old_signup_start in _source:
+    _source = _source.replace(_old_signup_start, _new_signup_start, 1)
+
+_old_signup_end = """        db.session.add(new_user)
+        db.session.commit()
+        flash('Account created successfully! Please log in.')
+        return redirect(url_for('login'))
+    return render_template('signup.html')"""
+_new_signup_end = """        db.session.add(new_user)
+        db.session.commit()
+
+        login_user(new_user, remember=True, duration=timedelta(days=30), fresh=True)
+        session.permanent = True
+        session.modified = True
+        flash('Account created successfully. You are now signed in.')
+        return redirect(url_for('dashboard'))
+
+    return render_template('signup.html')"""
+if _old_signup_end in _source:
+    _source = _source.replace(_old_signup_end, _new_signup_end, 1)
+
 _recovered_app_file.write_text(_source, encoding="utf-8")
 os.chdir(RUNTIME_DIR)
 
