@@ -196,6 +196,26 @@ _new_signup_end = """        db.session.add(new_user)
 if _old_signup_end in _source:
     _source = _source.replace(_old_signup_end, _new_signup_end, 1)
 
+# Dashboard should show the currently active advertisements under the user actions.
+_old_dashboard_route = """@app.route('/dashboard')
+@login_required
+def dashboard():
+    return render_template('dashboard.html', user=current_user)"""
+_new_dashboard_route = """@app.route('/dashboard')
+@login_required
+def dashboard():
+    advertisements = Advertisement.query.filter_by(active=True).order_by(
+        Advertisement.position,
+        Advertisement.created_at.desc()
+    ).limit(7).all()
+    return render_template(
+        'dashboard.html',
+        user=current_user,
+        advertisements=advertisements
+    )"""
+if _old_dashboard_route in _source:
+    _source = _source.replace(_old_dashboard_route, _new_dashboard_route, 1)
+
 # ---------------------------------------------------------------------------
 # Marketplace moderation, international contact, purchase and location flow
 # ---------------------------------------------------------------------------
@@ -584,6 +604,79 @@ _easy_patch_template("item_detail.html", [
                     </button>"""
     ),
 ])
+
+
+# Dashboard: place advertisements below the dashboard cards and keep footer at page bottom.
+_dashboard_path = _templates_dir / "dashboard.html"
+if _dashboard_path.exists():
+    _dashboard_html = _dashboard_path.read_text(encoding="utf-8")
+
+    if 'class="easy-dashboard-main"' not in _dashboard_html:
+        _dashboard_html = _dashboard_html.replace(
+            '<div class="container mt-5">',
+            '<main class="easy-dashboard-main">\n<div class="container mt-5">',
+            1,
+        )
+
+        _dashboard_ads = r'''
+</div>
+
+<section class="container mt-4 mb-4 easy-dashboard-ads">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <h3 class="mb-1">Featured on Easy Soko</h3>
+            <p class="text-muted mb-0">Products and offers currently being advertised.</p>
+        </div>
+        <a href="/browse" class="btn btn-outline-primary btn-sm">View Marketplace</a>
+    </div>
+
+    {% if advertisements %}
+    <div class="row g-3">
+        {% for ad in advertisements %}
+        <div class="col-12 col-sm-6 col-lg-4">
+            <div class="card h-100 easy-ad-card">
+                {% if ad.image_url %}
+                <img src="{{ ad.image_url }}"
+                     class="card-img-top easy-ad-card-image"
+                     alt="{{ ad.title }}"
+                     loading="lazy">
+                {% endif %}
+                <div class="card-body d-flex flex-column">
+                    <span class="badge bg-primary-subtle text-primary align-self-start mb-2">Featured</span>
+                    <h5 class="card-title">{{ ad.title }}</h5>
+                    {% if ad.description %}
+                    <p class="card-text text-muted easy-ad-description">{{ ad.description }}</p>
+                    {% endif %}
+                    {% if ad.link_url %}
+                    <a href="{{ ad.link_url }}" class="btn btn-primary mt-auto">View Item</a>
+                    {% else %}
+                    <a href="/browse" class="btn btn-primary mt-auto">Browse Marketplace</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card easy-empty-ads">
+        <div class="card-body text-center py-4">
+            <h5 class="mb-2">No featured items yet</h5>
+            <p class="text-muted mb-3">Approved products promoted by the admin will appear here.</p>
+            <a href="/browse" class="btn btn-primary">Browse Marketplace</a>
+        </div>
+    </div>
+    {% endif %}
+</section>
+</main>
+'''
+
+        _dashboard_html = _dashboard_html.replace(
+            '</div>\n<footer class="footer mt-auto py-3">',
+            _dashboard_ads + '\n<footer class="footer mt-auto py-3">',
+            1,
+        )
+
+    _dashboard_path.write_text(_dashboard_html, encoding="utf-8")
 
 
 # A compact desktop/tablet navbar plus a thumb-friendly phone bottom bar.
@@ -1150,6 +1243,53 @@ th {
     .navbar-brand:hover,
     .nav-link:hover {
         transform: none !important;
+    }
+}
+
+/* EASY_SOKO_DASHBOARD_ADS_V1 */
+.easy-dashboard-main {
+    flex: 1 0 auto;
+    width: 100%;
+}
+
+.easy-dashboard-ads {
+    width: calc(100% - 24px);
+}
+
+.easy-ad-card {
+    overflow: hidden;
+}
+
+.easy-ad-card-image {
+    width: 100%;
+    height: 210px;
+    object-fit: cover;
+}
+
+.easy-ad-description {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.easy-empty-ads {
+    border-style: dashed;
+}
+
+@media (max-width: 767.98px) {
+    .easy-dashboard-main {
+        width: 100%;
+    }
+
+    .easy-dashboard-ads {
+        width: calc(100% - 16px) !important;
+        margin-left: 8px !important;
+        margin-right: 8px !important;
+    }
+
+    .easy-ad-card-image {
+        height: 180px;
     }
 }
 
