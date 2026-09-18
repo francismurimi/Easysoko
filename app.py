@@ -63,6 +63,33 @@ def _restore_recovered_project():
 
 
 _recovered_app_file = _restore_recovered_project()
+
+# Adapt the recovered application for a persistent Vercel PostgreSQL database.
+# The original project used a local SQLite file, which is ephemeral on Vercel.
+_source = _recovered_app_file.read_text(encoding="utf-8")
+
+_old_db = "app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///marketplace.db'"
+_new_db = """database_url = os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_URL')
+if database_url and database_url.startswith('postgres://'):
+    database_url = 'postgresql://' + database_url[len('postgres://'):]
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:////tmp/marketplace.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}"""
+if _old_db in _source:
+    _source = _source.replace(_old_db, _new_db, 1)
+
+# Seller-created items should be visible in Browse immediately.
+_old_item_default = "approval_status = db.Column(db.String(20), default='pending')  # pending, approved, rejected\n\nclass Cart"
+_new_item_default = "approval_status = db.Column(db.String(20), default='approved')  # visible immediately\n\nclass Cart"
+if _old_item_default in _source:
+    _source = _source.replace(_old_item_default, _new_item_default, 1)
+
+_old_new_item = "image_url=final_image_url, \n            seller_id=current_user.id\n        )"
+_new_new_item = "image_url=final_image_url, \n            seller_id=current_user.id,\n            approval_status='approved'\n        )"
+if _old_new_item in _source:
+    _source = _source.replace(_old_new_item, _new_new_item, 1)
+
+_recovered_app_file.write_text(_source, encoding="utf-8")
 os.chdir(RUNTIME_DIR)
 
 spec = importlib.util.spec_from_file_location("easysoko_recovered", _recovered_app_file)
