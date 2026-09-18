@@ -72,7 +72,9 @@ _old_db = "app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///marketplace.db'"
 _new_db = """database_url = os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_URL')
 if database_url and database_url.startswith('postgres://'):
     database_url = 'postgresql://' + database_url[len('postgres://'):]
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:////tmp/marketplace.db'
+if os.environ.get('VERCEL') and not database_url:
+    raise RuntimeError('DATABASE_URL is required on Vercel. Refusing temporary SQLite so live Easy Soko data cannot disappear.')
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///marketplace.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}"""
 if _old_db in _source:
@@ -204,13 +206,20 @@ def dashboard():
 _new_dashboard_route = """@app.route('/dashboard')
 @login_required
 def dashboard():
+    approved_items = Item.query.filter_by(
+        approval_status='approved',
+        sold=False
+    ).order_by(Item.id.desc()).limit(12).all()
+
     advertisements = Advertisement.query.filter_by(active=True).order_by(
         Advertisement.position,
         Advertisement.created_at.desc()
     ).limit(7).all()
+
     return render_template(
         'dashboard.html',
         user=current_user,
+        approved_items=approved_items,
         advertisements=advertisements
     )"""
 if _old_dashboard_route in _source:
@@ -620,6 +629,48 @@ if _dashboard_path.exists():
 
         _dashboard_ads = r'''
 </div>
+
+<section class="container mt-4 mb-4 easy-dashboard-marketplace">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <h3 class="mb-1">Approved Marketplace Items</h3>
+            <p class="text-muted mb-0">Products approved by the admin and available to all Easy Soko users.</p>
+        </div>
+        <a href="/browse" class="btn btn-outline-primary btn-sm">View All</a>
+    </div>
+
+    {% if approved_items %}
+    <div class="row g-3">
+        {% for item in approved_items %}
+        <div class="col-12 col-sm-6 col-lg-4">
+            <div class="card h-100 easy-market-card">
+                {% if item.image_url %}
+                <img src="{{ item.image_url }}" class="card-img-top easy-market-card-image"
+                     alt="{{ item.title }}" loading="lazy">
+                {% endif %}
+                <div class="card-body d-flex flex-column">
+                    <span class="badge bg-success align-self-start mb-2">Approved</span>
+                    <h5 class="card-title">{{ item.title }}</h5>
+                    <p class="small text-muted mb-2">{{ item.category.name }} · Seller: {{ item.seller.username }}</p>
+                    <p class="card-text easy-ad-description">{{ item.desc }}</p>
+                    <div class="mt-auto">
+                        <strong class="d-block mb-2">Ksh {{ '%.2f' % item.price if item.price else 'N/A' }}</strong>
+                        <a href="/item/{{ item.id }}" class="btn btn-primary w-100">View Item</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card easy-empty-ads">
+        <div class="card-body text-center py-4">
+            <h5 class="mb-2">No approved products yet</h5>
+            <p class="text-muted mb-0">Products will appear here after an admin approves them.</p>
+        </div>
+    </div>
+    {% endif %}
+</section>
 
 <section class="container mt-4 mb-4 easy-dashboard-ads">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
@@ -1260,10 +1311,15 @@ th {
     overflow: hidden;
 }
 
-.easy-ad-card-image {
+.easy-ad-card-image,
+.easy-market-card-image {
     width: 100%;
     height: 210px;
     object-fit: cover;
+}
+
+.easy-market-card {
+    overflow: hidden;
 }
 
 .easy-ad-description {
@@ -1288,7 +1344,8 @@ th {
         margin-right: 8px !important;
     }
 
-    .easy-ad-card-image {
+    .easy-ad-card-image,
+    .easy-market-card-image {
         height: 180px;
     }
 }
