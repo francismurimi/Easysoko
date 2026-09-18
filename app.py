@@ -78,14 +78,14 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}"""
 if _old_db in _source:
     _source = _source.replace(_old_db, _new_db, 1)
 
-# Seller-created items should be visible in Browse immediately.
+# Seller-created items must be approved by an admin before they reach Browse.
 _old_item_default = "approval_status = db.Column(db.String(20), default='pending')  # pending, approved, rejected\n\nclass Cart"
-_new_item_default = "approval_status = db.Column(db.String(20), default='approved')  # visible immediately\n\nclass Cart"
+_new_item_default = "approval_status = db.Column(db.String(20), default='pending')  # pending, approved, rejected\n\nclass Cart"
 if _old_item_default in _source:
     _source = _source.replace(_old_item_default, _new_item_default, 1)
 
 _old_new_item = "image_url=final_image_url, \n            seller_id=current_user.id\n        )"
-_new_new_item = "image_url=final_image_url, \n            seller_id=current_user.id,\n            approval_status='approved'\n        )"
+_new_new_item = "image_url=final_image_url, \n            seller_id=current_user.id,\n            approval_status='pending'\n        )"
 if _old_new_item in _source:
     _source = _source.replace(_old_new_item, _new_new_item, 1)
 
@@ -195,6 +195,172 @@ _new_signup_end = """        db.session.add(new_user)
     return render_template('signup.html')"""
 if _old_signup_end in _source:
     _source = _source.replace(_old_signup_end, _new_signup_end, 1)
+
+# ---------------------------------------------------------------------------
+# Marketplace moderation, international contact, purchase and location flow
+# ---------------------------------------------------------------------------
+
+# Sellers need usable contact/location details before submitting a listing.
+_sell_anchor = """    if request.method == 'POST':
+        title = request.form['title']"""
+_sell_replacement = """    if request.method == 'POST':
+        seller_phone = re.sub(r'[\\s().-]', '', (current_user.contact_number or '').strip())
+        if not re.fullmatch(r'\\+[1-9]\\d{6,14}', seller_phone):
+            flash('Add a valid international contact number such as +254712345678 before listing an item.')
+            return redirect(url_for('update_profile'))
+        if not (current_user.shop_location or '').strip():
+            flash('Add your shop/location details before listing an item so buyers can find you.')
+            return redirect(url_for('update_profile'))
+
+        title = request.form['title']"""
+if _sell_anchor in _source:
+    _source = _source.replace(_sell_anchor, _sell_replacement, 1)
+
+_source = _source.replace(
+    "        flash('Item listed for sale!')",
+    "        flash('Item submitted for admin approval. It will appear in the marketplace after approval.')",
+    1,
+)
+
+# Pending/rejected products are not public, but the seller and signed-in admin
+# can still preview them.
+_item_route_anchor = """def item_detail(item_id):
+    item = Item.query.get_or_404(item_id)
+    if request.method == 'POST':"""
+_item_route_replacement = """def item_detail(item_id):
+    item = Item.query.get_or_404(item_id)
+
+    if item.approval_status != 'approved':
+        seller_preview = current_user.is_authenticated and item.seller_id == current_user.id
+        admin_preview = session.get('admin_logged_in')
+        if not seller_preview and not admin_preview:
+            flash('This item is awaiting admin approval and is not available in the marketplace yet.')
+            return redirect(url_for('browse'))
+
+    if request.method == 'POST':"""
+if _item_route_anchor in _source:
+    _source = _source.replace(_item_route_anchor, _item_route_replacement, 1)
+
+# Buyer contact is mandatory and must use international/E.164-style format.
+_old_buy = """        if action == 'buy':
+            if item.sold:
+                flash('Item already sold!')
+            else:
+                item.sold = True
+                db.session.add(Purchase(user_id=current_user.id, item_id=item.id))
+                db.session.add(UserAction(user_id=current_user.id, action='buy', item_id=item.id))
+                db.session.commit()
+                flash('You bought this item!')"""
+_new_buy = """        if action == 'buy':
+            buyer_phone = re.sub(r'[\\s().-]', '', (current_user.contact_number or '').strip())
+            if not re.fullmatch(r'\\+[1-9]\\d{6,14}', buyer_phone):
+                flash('Add a valid international contact number such as +254712345678 before purchasing.')
+                return redirect(url_for('update_profile'))
+            if item.approval_status != 'approved':
+                flash('This item is not approved for sale yet.')
+            elif item.sold:
+                flash('Item already sold!')
+            elif item.seller_id == current_user.id:
+                flash('You cannot purchase your own listing.')
+            else:
+                current_user.contact_number = buyer_phone
+                item.sold = True
+                db.session.add(Purchase(user_id=current_user.id, item_id=item.id))
+                db.session.add(UserAction(user_id=current_user.id, action='buy', item_id=item.id))
+                db.session.commit()
+                flash('Purchase recorded. Use the seller contact and shop location shown on this page to arrange payment and collection/delivery.')"""
+if _old_buy in _source:
+    _source = _source.replace(_old_buy, _new_buy, 1)
+
+# Normalize/validate international contact numbers when a profile is updated.
+_old_profile_contact = """        contact_number = request.form.get('contact_number')
+        delivery_address = request.form.get('delivery_address')
+        shop_location = request.form.get('shop_location')"""
+_new_profile_contact = """        contact_number = request.form.get('contact_number', '').strip()
+        normalized_contact = re.sub(r'[\\s().-]', '', contact_number)
+        if normalized_contact and not re.fullmatch(r'\\+[1-9]\\d{6,14}', normalized_contact):
+            flash('Contact number must include a country code, for example +254712345678, +14155552671 or +447911123456.')
+            return render_template('update_profile.html', user=current_user)
+
+        delivery_address = request.form.get('delivery_address', '').strip()
+        shop_location = request.form.get('shop_location', '').strip()"""
+if _old_profile_contact in _source:
+    _source = _source.replace(_old_profile_contact, _new_profile_contact, 1)
+
+_source = _source.replace(
+    "        current_user.contact_number = contact_number",
+    "        current_user.contact_number = normalized_contact or None",
+    1,
+)
+
+# Make the admin approval confirmation explain the next step.
+_source = _source.replace(
+    "    flash('Item approved.')",
+    "    flash('Item approved and now visible in the marketplace. You can also promote it from Manage Advertisements.')",
+    1,
+)
+
+# Approved products become selectable in the advertisement manager.
+_old_ads_render = """    advertisements = Advertisement.query.order_by(Advertisement.position, Advertisement.created_at.desc()).all()
+    return render_template('admin_advertisements.html', advertisements=advertisements)"""
+_new_ads_render = """    advertisements = Advertisement.query.order_by(Advertisement.position, Advertisement.created_at.desc()).all()
+    approved_items = Item.query.filter_by(approval_status='approved', sold=False).order_by(Item.id.desc()).all()
+    return render_template(
+        'admin_advertisements.html',
+        advertisements=advertisements,
+        approved_items=approved_items
+    )"""
+if _old_ads_render in _source:
+    _source = _source.replace(_old_ads_render, _new_ads_render, 1)
+
+_ad_route_anchor = """@app.route('/admin/advertisement/<int:ad_id>/toggle', methods=['POST'])
+def toggle_advertisement(ad_id):"""
+_ad_route = """@app.route('/admin/advertise_item/<int:item_id>', methods=['POST'])
+def advertise_item(item_id):
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_login'))
+
+    item = Item.query.get_or_404(item_id)
+    if item.approval_status != 'approved' or item.sold:
+        flash('Only approved, available products can be promoted.')
+        return redirect(url_for('admin_advertisements'))
+    if not item.image_url:
+        flash('Add an image to this item before promoting it as an advertisement.')
+        return redirect(url_for('admin_advertisements'))
+
+    item_link = url_for('item_detail', item_id=item.id)
+    existing = Advertisement.query.filter_by(link_url=item_link).first()
+    if existing:
+        existing.title = item.title
+        existing.description = item.desc
+        existing.image_url = item.image_url
+        existing.active = True
+        db.session.commit()
+        flash('Advertisement refreshed and activated for this product.')
+        return redirect(url_for('admin_advertisements'))
+
+    if Advertisement.query.filter_by(active=True).count() >= 7:
+        flash('Maximum 7 active advertisements allowed. Deactivate one first.')
+        return redirect(url_for('admin_advertisements'))
+
+    db.session.add(Advertisement(
+        title=item.title,
+        description=item.desc,
+        image_url=item.image_url,
+        link_url=item_link,
+        position=0,
+        active=True
+    ))
+    db.session.commit()
+    flash('Approved product added to the advertisement section.')
+    return redirect(url_for('admin_advertisements'))
+
+
+@app.route('/admin/advertisement/<int:ad_id>/toggle', methods=['POST'])
+def toggle_advertisement(ad_id):"""
+if _ad_route_anchor in _source:
+    _source = _source.replace(_ad_route_anchor, _ad_route, 1)
+
 
 _recovered_app_file.write_text(_source, encoding="utf-8")
 
