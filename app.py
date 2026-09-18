@@ -1327,15 +1327,22 @@ spec.loader.exec_module(module)
 # Vercel detects this top-level Flask object.
 app = module.app
 
-# The recovered app currently uses SQLite. Vercel's filesystem is ephemeral,
-# so this is suitable only for the deployed demo until PostgreSQL is added.
+# Safe production database startup.
+# IMPORTANT: deployments must never delete, drop, truncate, recreate, or reset
+# existing Easy Soko data. create_all() only creates missing tables.
 try:
     with app.app_context():
         module.db.create_all()
-        module.add_initial_categories()
-        module.add_admin_user()
-        module.add_demo_user()
-        module.add_demo_advertisements()
-        module.add_demo_items()
+
+        # Keep only essential bootstrap data, and only when it is missing.
+        # Existing users, items, carts, purchases, ads, approvals and profiles
+        # are never overwritten during a deployment.
+        if module.Category.query.count() == 0:
+            module.add_initial_categories()
+
+        admin_email = os.environ.get('EASY_SOKO_ADMIN_EMAIL', 'admin@example.com')
+        existing_admin = module.User.query.filter_by(email=admin_email).first()
+        if existing_admin is None:
+            module.add_admin_user()
 except Exception:
-    app.logger.exception("Easy Soko startup database initialization failed")
+    app.logger.exception("Easy Soko safe database initialization failed")
