@@ -171,6 +171,13 @@ def signup():
 if _old_signup_start in _source:
     _source = _source.replace(_old_signup_start, _new_signup_start, 1)
 
+# Normalize signup username/email so accidental spaces and email casing do not break later login.
+_source = _source.replace(
+    "        username = request.form['username']\n        email = request.form['email']\n        password = request.form['password']",
+    "        username = request.form.get('username', '').strip()\n        email = request.form.get('email', '').strip().lower()\n        password = request.form.get('password', '')",
+    1,
+)
+
 _old_signup_end = """        db.session.add(new_user)
         db.session.commit()
         flash('Account created successfully! Please log in.')
