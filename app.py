@@ -219,7 +219,6 @@ try:
         module.add_admin_user()
         module.add_demo_user()
         module.add_demo_advertisements()
-        module.update_demo_item_images()
         module.add_demo_items()
 except Exception:
     app.logger.exception("Easy Soko startup database initialization failed")
