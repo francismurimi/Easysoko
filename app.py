@@ -788,6 +788,25 @@ th {
         transform: none !important;
     }
 }
+
+/* EASY_SOKO_STICKY_FOOTER_V1 */
+html {
+    min-height: 100%;
+}
+
+body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+}
+
+.footer {
+    margin-top: auto !important;
+    flex-shrink: 0;
+    width: 100%;
+}
+
 '''
         _css_path.write_text(_css, encoding="utf-8")
 
