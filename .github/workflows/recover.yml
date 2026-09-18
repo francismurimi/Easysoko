@@ -1,0 +1,39 @@
+name: Complete Easy Soko Recovery
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/recover.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore recovered project
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .recovery/chunk* > /tmp/easysoko.b64
+          base64 --decode /tmp/easysoko.b64 > /tmp/easysoko.zip
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('/tmp/easysoko.zip') as z:
+              z.extractall('.')
+          PY
+          python -m py_compile app.py
+          rm -rf .recovery
+          git config user.name "Easy Soko Recovery"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Recover Easy Soko ecommerce application"
+          git push origin HEAD:main
