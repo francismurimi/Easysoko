@@ -388,6 +388,204 @@ for _template_file in _templates_dir.glob("*.html"):
             )
     _template_file.write_text(_html, encoding="utf-8")
 
+# Marketplace workflow UI patches.
+def _easy_patch_template(name, replacements):
+    path = _templates_dir / name
+    if not path.exists():
+        return
+    html = path.read_text(encoding="utf-8")
+    for old, new in replacements:
+        if old in html:
+            html = html.replace(old, new, 1)
+    path.write_text(html, encoding="utf-8")
+
+
+# Seller listing page: make moderation expectations explicit.
+_easy_patch_template("sell.html", [
+    (
+        "<h2>Sell an Item</h2>",
+        """<h2>Sell an Item</h2>
+    <div class="alert alert-info">
+        <strong>How listing works:</strong> submit your product here, then an Easy Soko admin reviews it.
+        It appears in the marketplace only after approval. Make sure your profile has an international
+        contact number and shop/location details before submitting.
+    </div>"""
+    ),
+])
+
+# Seller profile: show moderation state for every listing.
+_easy_patch_template("profile.html", [
+    (
+        """<h5 class="card-title">{{ item.title }}</h5>
+                            <span class="badge bg-info text-dark mb-2">{{ item.category.name|capitalize }}</span>""",
+        """<h5 class="card-title">{{ item.title }}</h5>
+                            <span class="badge bg-info text-dark mb-2">{{ item.category.name|capitalize }}</span>
+                            {% if item.approval_status == 'approved' %}
+                                <span class="badge bg-success mb-2">Approved / Live</span>
+                            {% elif item.approval_status == 'rejected' %}
+                                <span class="badge bg-danger mb-2">Rejected</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark mb-2">Pending Admin Approval</span>
+                            {% endif %}"""
+    ),
+])
+
+# Admin advertisement manager: approved marketplace products can be promoted directly.
+_easy_patch_template("admin_advertisements.html", [
+    (
+        """    <!-- Add New Advertisement Form -->""",
+        """    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-box-open"></i> Approved Products Ready to Promote</h5>
+            <span class="badge bg-success">{{ approved_items|length }} approved</span>
+        </div>
+        <div class="card-body">
+            {% if approved_items %}
+            <div class="row">
+                {% for item in approved_items %}
+                <div class="col-md-6 col-lg-4 mb-3">
+                    <div class="card h-100">
+                        {% if item.image_url %}
+                            <img src="{{ item.image_url }}" class="card-img-top" alt="{{ item.title }}" style="height:170px;object-fit:cover;">
+                        {% endif %}
+                        <div class="card-body">
+                            <h6>{{ item.title }}</h6>
+                            <p class="small text-muted mb-2">{{ item.category.name }} · {{ item.seller.username }}</p>
+                            <p class="mb-2">Ksh {{ '%.2f' % item.price if item.price else 'N/A' }}</p>
+                            <form method="post" action="/admin/advertise_item/{{ item.id }}">
+                                <button type="submit" class="btn btn-primary w-100" {% if not item.image_url %}disabled{% endif %}>
+                                    <i class="fas fa-bullhorn"></i> Promote as Advertisement
+                                </button>
+                            </form>
+                            {% if not item.image_url %}
+                                <small class="text-warning">Add a product image before promoting.</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+                <p class="text-muted mb-0">No approved, available products are ready for promotion yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Add New Advertisement Form -->"""
+    ),
+])
+
+# Profile update: international phone number plus device-location buttons.
+_easy_patch_template("update_profile.html", [
+    (
+        """<input type="tel" class="form-control" id="contact_number" name="contact_number" value="{{ user.contact_number or '' }}" placeholder="Enter your phone number">""",
+        """<input type="tel" inputmode="tel" autocomplete="tel" class="form-control" id="contact_number"
+                                   name="contact_number" value="{{ user.contact_number or '' }}"
+                                   placeholder="+254712345678" required>
+                            <div class="form-text">
+                                Include the country code. Examples: Kenya +254712345678, USA/Canada +14155552671,
+                                UK +447911123456. International numbers from any country are supported.
+                            </div>"""
+    ),
+    (
+        """<textarea class="form-control" id="delivery_address" name="delivery_address" rows="3" placeholder="Enter your delivery address">{{ user.delivery_address or '' }}</textarea>
+                            <div class="form-text">This address will be used for deliveries when you buy items.</div>""",
+        """<textarea class="form-control" id="delivery_address" name="delivery_address" rows="3" placeholder="Enter your delivery address">{{ user.delivery_address or '' }}</textarea>
+                            <button type="button" class="btn btn-outline-primary btn-sm mt-2"
+                                    onclick="easyUseLocation('delivery_address', 'delivery_location_status')">
+                                📍 Use my current location
+                            </button>
+                            <div id="delivery_location_status" class="form-text">This address will be used for deliveries when you buy items.</div>"""
+    ),
+    (
+        """<textarea class="form-control" id="shop_location" name="shop_location" rows="3" placeholder="Enter your shop location">{{ user.shop_location or '' }}</textarea>
+                            <div class="form-text">If you're a seller, provide your shop location for customers to find you.</div>""",
+        """<textarea class="form-control" id="shop_location" name="shop_location" rows="3" placeholder="Enter your shop location or use device location">{{ user.shop_location or '' }}</textarea>
+                            <button type="button" class="btn btn-outline-success btn-sm mt-2"
+                                    onclick="easyUseLocation('shop_location', 'shop_location_status')">
+                                📍 Use my shop/device location
+                            </button>
+                            <div id="shop_location_status" class="form-text">
+                                Your browser will ask permission before Easy Soko reads the device location. You can also type the location manually.
+                            </div>"""
+    ),
+    (
+        """<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>""",
+        """<script>
+function easyUseLocation(targetId, statusId) {
+    const field = document.getElementById(targetId);
+    const status = document.getElementById(statusId);
+
+    if (!navigator.geolocation) {
+        status.textContent = 'Location is not supported by this browser. Enter the location manually.';
+        return;
+    }
+
+    status.textContent = 'Requesting location permission…';
+
+    navigator.geolocation.getCurrentPosition(
+        function(position) {
+            const lat = position.coords.latitude.toFixed(6);
+            const lng = position.coords.longitude.toFixed(6);
+            const accuracy = Math.round(position.coords.accuracy || 0);
+            const mapUrl = 'https://www.google.com/maps?q=' + lat + ',' + lng;
+            field.value = 'Latitude: ' + lat + ', Longitude: ' + lng +
+                          ', Accuracy: about ' + accuracy + ' m | ' + mapUrl;
+            status.textContent = 'Location captured. You can edit the text before saving.';
+        },
+        function(error) {
+            let message = 'Could not access your location. Enter it manually.';
+            if (error.code === 1) message = 'Location permission was denied. You can still enter the location manually.';
+            if (error.code === 2) message = 'Your device could not determine its location. Enter it manually.';
+            if (error.code === 3) message = 'Location request timed out. Try again or enter it manually.';
+            status.textContent = message;
+        },
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+    );
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>"""
+    ),
+])
+
+# Product page: show seller shop location and explain buyer contact requirement.
+_easy_patch_template("item_detail.html", [
+    (
+        """{% if item.seller.contact_number %}
+                        <a href="https://wa.me/{{ item.seller.contact_number }}?text=Hi, I'm interested in your item: {{ item.title }} - {{ request.url }}" """,
+        """{% if item.seller.shop_location %}
+                        <p class="card-text mb-2">
+                            <strong>Shop / Seller Location:</strong><br>{{ item.seller.shop_location }}
+                        </p>
+                        <a class="btn btn-outline-primary btn-sm mb-2" target="_blank"
+                           href="https://www.google.com/maps/search/?api=1&query={{ item.seller.shop_location|urlencode }}">
+                            📍 Open in Maps
+                        </a>
+                    {% endif %}
+                    {% if item.seller.contact_number %}
+                        <a href="https://wa.me/{{ item.seller.contact_number|replace('+','') }}?text=Hi, I'm interested in your item: {{ item.title }} - {{ request.url }}" """
+    ),
+    (
+        """<p class="text-warning"><strong>Are you sure you want to purchase this item?</strong></p>""",
+        """{% if current_user.contact_number %}
+                    <p><strong>Your contact:</strong> {{ current_user.contact_number }}</p>
+                {% else %}
+                    <div class="alert alert-warning">
+                        Add an international contact number in your profile before purchasing.
+                        <a href="/profile/update" class="alert-link">Update profile</a>
+                    </div>
+                {% endif %}
+                <p class="text-warning"><strong>Are you sure you want to purchase this item?</strong></p>"""
+    ),
+    (
+        """<button name="action" value="buy" class="btn btn-success">Confirm Purchase</button>""",
+        """<button name="action" value="buy" class="btn btn-success" {% if not current_user.contact_number %}disabled{% endif %}>
+                        Confirm Purchase
+                    </button>"""
+    ),
+])
+
+
 # A compact desktop/tablet navbar plus a thumb-friendly phone bottom bar.
 _navbar_path = _templates_dir / "navbar.html"
 _navbar_path.write_text(r'''<nav class="navbar navbar-expand-lg sticky-top easy-navbar">
