@@ -3,7 +3,10 @@
   "framework": "flask",
   "functions": {
     "app.py": {
-      "includeFiles": "recovery/**"
+      "includeFiles": [
+        "recovery/**",
+        "repair/**"
+      ]
     }
   }
 }
