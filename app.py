@@ -72,9 +72,8 @@ _old_db = "app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///marketplace.db'"
 _new_db = """database_url = os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_URL')
 if database_url and database_url.startswith('postgres://'):
     database_url = 'postgresql://' + database_url[len('postgres://'):]
-if os.environ.get('VERCEL') and not database_url:
-    raise RuntimeError('DATABASE_URL is required on Vercel. Refusing temporary SQLite so live Easy Soko data cannot disappear.')
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///marketplace.db'
+app.config['EASY_SOKO_PERSISTENT_DATABASE'] = bool(database_url)
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:////tmp/easysoko-unconfigured.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}"""
 if _old_db in _source:
@@ -998,6 +997,80 @@ for _layout_file in _templates_dir.glob("*.html"):
         _layout_file.write_text(_layout_html, encoding="utf-8")
 
 
+# Final auth templates: full-height page with footer at the actual screen bottom.
+_login_path = _templates_dir / "login.html"
+_login_path.write_text(r'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Login - Easy Soko</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260919r3">
+</head>
+<body class="easy-auth-body">
+{% include 'navbar.html' %}
+
+<main class="easy-auth-main">
+    <div class="container easy-auth-card" style="max-width:520px;">
+        <div class="text-center mb-4">
+            <h2 class="mb-2">Welcome back</h2>
+            <p class="text-muted mb-3">Sign in once and continue using Easy Soko.</p>
+
+            {% if google_auth_enabled %}
+            <a href="/auth/google" class="btn btn-light border easy-google-btn w-100 mb-3">
+                <span class="easy-google-mark">G</span> Continue with Google
+            </a>
+            <div class="easy-auth-divider"><span>or</span></div>
+            {% endif %}
+        </div>
+
+        <form method="post">
+            <div class="mb-3">
+                <label for="username" class="form-label">Username or email</label>
+                <input type="text" class="form-control" id="username" name="username"
+                       autocomplete="username" required>
+            </div>
+            <div class="mb-3">
+                <label for="password" class="form-label">Password</label>
+                <input type="password" class="form-control" id="password" name="password"
+                       autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="btn btn-primary w-100">Sign in</button>
+        </form>
+
+        <div class="easy-auth-switch mt-3 text-center">
+            <span>Don't have an account?</span>
+            <a href="/signup" class="fw-bold d-block mt-1">Create your Easy Soko account</a>
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="alert alert-warning mt-3">{{ messages[0] }}</div>
+          {% endif %}
+        {% endwith %}
+    </div>
+</main>
+
+<footer class="footer easy-auth-footer py-3">
+  <div class="container text-center">
+    <span class="text-muted">&copy; 2026 Easy Soko. <a href="/contact">Contact/About</a></span>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>''', encoding="utf-8")
+
+_signup_path = _templates_dir / "signup.html"
+if _signup_path.exists():
+    _signup_html = _signup_path.read_text(encoding="utf-8")
+    _signup_html = _signup_html.replace(
+        "{{ url_for('static', filename='css/style.css') }}",
+        "{{ url_for('static', filename='css/style.css') }}?v=20260919r3"
+    )
+    _signup_path.write_text(_signup_html, encoding="utf-8")
+
 # Make admin moderation buttons explicit POST forms tied to Flask endpoints.
 _admin_dashboard_path = _templates_dir / "admin_dashboard.html"
 if _admin_dashboard_path.exists():
@@ -1830,6 +1903,82 @@ body {
 }
 
 '''
+        if "EASY_SOKO_FINAL_LAYOUT_R3" not in _css:
+            _css += r'''
+
+/* EASY_SOKO_FINAL_LAYOUT_R3 */
+.easy-auth-body {
+    min-height: 100vh !important;
+    min-height: 100dvh !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+.easy-auth-main {
+    flex: 1 0 auto !important;
+    width: 100%;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 42px 16px 28px;
+}
+
+.easy-auth-main > .container {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+.easy-auth-footer {
+    flex: 0 0 auto !important;
+    margin-top: auto !important;
+    width: 100%;
+    position: relative !important;
+    bottom: auto !important;
+}
+
+@media (max-width: 767.98px) {
+    body {
+        font-size: 18px !important;
+    }
+
+    .easy-auth-main {
+        padding: 28px 10px 22px;
+    }
+
+    .easy-auth-main .container {
+        width: calc(100% - 12px) !important;
+        padding: 22px !important;
+    }
+
+    .form-control,
+    .form-select {
+        min-height: 58px !important;
+        font-size: 18px !important;
+    }
+
+    .btn {
+        min-height: 56px !important;
+        font-size: 1.06rem !important;
+    }
+
+    .easy-mobile-nav {
+        min-height: 82px !important;
+    }
+
+    .easy-mobile-nav a {
+        min-height: 72px !important;
+        font-size: .8rem !important;
+    }
+
+    .easy-mobile-icon {
+        font-size: 1.55rem !important;
+    }
+
+    .footer .container {
+        font-size: .95rem !important;
+    }
+}
+'''
         _css_path.write_text(_css, encoding="utf-8")
 
 os.chdir(RUNTIME_DIR)
@@ -1930,6 +2079,279 @@ if 'reject_category' not in _existing_endpoints:
         view_func=_reject_category_compat,
         methods=['POST'],
     )
+
+# ---------------------------------------------------------------------------
+# Final production data/auth/marketplace overlay
+# ---------------------------------------------------------------------------
+from flask import request as _request, render_template as _render_template, jsonify as _jsonify
+from flask_login import login_user as _login_user, current_user as _current_user, login_required as _login_required
+from werkzeug.security import generate_password_hash as _generate_password_hash, check_password_hash as _check_password_hash
+from sqlalchemy.exc import IntegrityError as _IntegrityError
+from hmac import compare_digest as _compare_digest
+from datetime import timedelta as _timedelta
+
+_BUILD_VERSION = "2026-09-19-r3"
+
+def _persistent_database_ready():
+    return bool(app.config.get('EASY_SOKO_PERSISTENT_DATABASE'))
+
+def _production_database_guard():
+    if os.environ.get('VERCEL') and not _persistent_database_ready():
+        _flash(
+            'Easy Soko persistent database is not connected yet. '
+            'DATABASE_URL must be configured in Vercel before accounts or products can be saved.'
+        )
+        return True
+    return False
+
+def _password_matches_and_upgrade(user, submitted_password):
+    stored = user.password or ''
+    is_hash = stored.startswith('scrypt:') or stored.startswith('pbkdf2:')
+    if is_hash:
+        try:
+            return _check_password_hash(stored, submitted_password)
+        except Exception:
+            return False
+
+    # Backward compatibility for old plaintext records. Upgrade immediately on success.
+    if _compare_digest(stored, submitted_password):
+        user.password = _generate_password_hash(submitted_password)
+        module.db.session.commit()
+        return True
+    return False
+
+def _load_user_from_database(user_id):
+    try:
+        return module.db.session.get(module.User, int(user_id))
+    except (TypeError, ValueError):
+        return None
+
+module.login_manager._user_callback = _load_user_from_database
+
+def _live_login():
+    if _current_user.is_authenticated:
+        return _redirect(_url_for('dashboard'))
+
+    if _request.method == 'POST':
+        if _production_database_guard():
+            return _render_template('login.html'), 503
+
+        identity = _request.form.get('username', '').strip()
+        password = _request.form.get('password', '')
+        user = module.User.query.filter(
+            (module.db.func.lower(module.User.username) == identity.lower()) |
+            (module.db.func.lower(module.User.email) == identity.lower())
+        ).first()
+
+        if user and _password_matches_and_upgrade(user, password):
+            _login_user(user, remember=True, duration=_timedelta(days=30), fresh=True)
+            _flask_session.permanent = True
+            _flask_session.modified = True
+            return _redirect(_url_for('dashboard'))
+
+        _flash('Invalid username/email or password. If you do not have an account, create one below.')
+
+    return _render_template('login.html')
+
+app.view_functions['login'] = _live_login
+
+def _live_signup():
+    if _current_user.is_authenticated:
+        return _redirect(_url_for('dashboard'))
+
+    if _request.method == 'POST':
+        if _production_database_guard():
+            return _render_template('signup.html'), 503
+
+        username = _request.form.get('username', '').strip()
+        email = _request.form.get('email', '').strip().lower()
+        password = _request.form.get('password', '')
+        first_name = _request.form.get('first_name', '').strip()
+        last_name = _request.form.get('last_name', '').strip()
+        sir_name = _request.form.get('sir_name', '').strip()
+
+        try:
+            age = int(_request.form.get('age', '0'))
+        except ValueError:
+            age = 0
+
+        if age < 13 or age > 120:
+            _flash('Age must be between 13 and 120.')
+            return _render_template('signup.html')
+
+        if len(password) < 10 or not re.search(r'[A-Z]', password) or not re.search(r'[a-z]', password) or not re.search(r'\d', password) or not re.search(r'[^A-Za-z0-9]', password):
+            _flash('Password must be at least 10 characters and include uppercase, lowercase, a number, and a special character.')
+            return _render_template('signup.html')
+
+        existing = module.User.query.filter(
+            (module.db.func.lower(module.User.username) == username.lower()) |
+            (module.db.func.lower(module.User.email) == email.lower())
+        ).first()
+        if existing:
+            _flash('That account already exists. Sign in instead of creating it again.')
+            return _redirect(_url_for('login'))
+
+        new_user = module.User(
+            username=username,
+            email=email,
+            password=_generate_password_hash(password),
+            first_name=first_name,
+            last_name=last_name,
+            sir_name=sir_name,
+            age=age,
+        )
+        module.db.session.add(new_user)
+        try:
+            module.db.session.commit()
+        except _IntegrityError:
+            module.db.session.rollback()
+            _flash('That username or email already has an Easy Soko account. Please sign in.')
+            return _redirect(_url_for('login'))
+
+        _login_user(new_user, remember=True, duration=_timedelta(days=30), fresh=True)
+        _flask_session.permanent = True
+        _flask_session.modified = True
+        _flash('Account created successfully. You are signed in.')
+        return _redirect(_url_for('dashboard'))
+
+    return _render_template('signup.html')
+
+app.view_functions['signup'] = _live_signup
+
+def _live_admin_login():
+    if _request.method == 'POST':
+        if _production_database_guard():
+            return _render_template('admin_login.html'), 503
+
+        identity = _request.form.get('username', '').strip()
+        password = _request.form.get('password', '')
+        user = module.User.query.filter(
+            module.User.is_admin.is_(True),
+            (
+                (module.db.func.lower(module.User.username) == identity.lower()) |
+                (module.db.func.lower(module.User.email) == identity.lower())
+            )
+        ).first()
+        if user and _password_matches_and_upgrade(user, password):
+            _flask_session['admin_logged_in'] = True
+            _flask_session.permanent = True
+            return _redirect(_url_for('admin_dashboard'))
+        _flash('Invalid admin credentials.')
+    return _render_template('admin_login.html')
+
+app.view_functions['admin_login'] = _live_admin_login
+
+def _live_browse():
+    category = _request.args.get('category')
+    q = _request.args.get('q', '').strip()
+
+    query = module.Item.query.filter_by(
+        sold=False,
+        approval_status='approved'
+    ).join(module.Category)
+
+    if category:
+        query = query.filter(module.Category.name == category)
+    if q:
+        query = query.filter(module.Item.title.ilike(f'%{q}%'))
+
+    items = query.order_by(module.Item.id.desc()).all()
+    categories = module.Category.query.filter_by(
+        approval_status='approved'
+    ).order_by(module.Category.name).all()
+    advertisements = module.Advertisement.query.filter_by(
+        active=True
+    ).order_by(
+        module.Advertisement.position,
+        module.Advertisement.created_at.desc()
+    ).limit(7).all()
+
+    return _render_template(
+        'browse.html',
+        items=items,
+        categories=categories,
+        advertisements=advertisements,
+    )
+
+app.view_functions['browse'] = _live_browse
+
+@_login_required
+def _live_dashboard():
+    approved_items = module.Item.query.filter_by(
+        sold=False,
+        approval_status='approved'
+    ).order_by(module.Item.id.desc()).limit(12).all()
+    advertisements = module.Advertisement.query.filter_by(
+        active=True
+    ).order_by(
+        module.Advertisement.position,
+        module.Advertisement.created_at.desc()
+    ).limit(7).all()
+    return _render_template(
+        'dashboard.html',
+        user=_current_user,
+        approved_items=approved_items,
+        advertisements=advertisements,
+    )
+
+app.view_functions['dashboard'] = _live_dashboard
+
+def _live_approve_item(item_id):
+    if not _flask_session.get('admin_logged_in'):
+        return _redirect(_url_for('admin_login'))
+    if _production_database_guard():
+        return _redirect(_url_for('admin_dashboard'))
+
+    item = module.db.session.get(module.Item, item_id)
+    if item is None:
+        return ("Item not found", 404)
+
+    item.approval_status = 'approved'
+    module.db.session.commit()
+    module.db.session.expire_all()
+    _flash('Item approved. It is now visible in Browse and on user dashboards.')
+    return _redirect(_url_for('admin_dashboard'))
+
+app.view_functions['approve_item'] = _live_approve_item
+
+def _live_reject_item(item_id):
+    if not _flask_session.get('admin_logged_in'):
+        return _redirect(_url_for('admin_login'))
+    if _production_database_guard():
+        return _redirect(_url_for('admin_dashboard'))
+
+    item = module.db.session.get(module.Item, item_id)
+    if item is None:
+        return ("Item not found", 404)
+
+    item.approval_status = 'rejected'
+    module.db.session.commit()
+    module.db.session.expire_all()
+    _flash('Item rejected.')
+    return _redirect(_url_for('admin_dashboard'))
+
+app.view_functions['reject_item'] = _live_reject_item
+
+if 'healthz' not in {rule.endpoint for rule in app.url_map.iter_rules()}:
+    @app.route('/healthz', endpoint='healthz')
+    def _easy_soko_health():
+        persistent = _persistent_database_ready()
+        return _jsonify({
+            'status': 'ok' if persistent else 'database_not_configured',
+            'build': _BUILD_VERSION,
+            'persistent_database': persistent,
+            'database': 'postgresql' if persistent else 'temporary-disabled-for-live-writes',
+        }), (200 if persistent else 503)
+
+@app.after_request
+def _easy_soko_fresh_dynamic_pages(response):
+    content_type = response.headers.get('Content-Type', '')
+    if 'text/html' in content_type or _request.path.startswith('/admin'):
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
+
 
 # Safe production database startup.
 # IMPORTANT: deployments must never delete, drop, truncate, recreate, or reset
