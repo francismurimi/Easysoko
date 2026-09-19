@@ -998,6 +998,28 @@ for _layout_file in _templates_dir.glob("*.html"):
         _layout_file.write_text(_layout_html, encoding="utf-8")
 
 
+# Make admin moderation buttons explicit POST forms tied to Flask endpoints.
+_admin_dashboard_path = _templates_dir / "admin_dashboard.html"
+if _admin_dashboard_path.exists():
+    _admin_html = _admin_dashboard_path.read_text(encoding="utf-8")
+    _admin_html = _admin_html.replace(
+        'action="/admin/approve_item/{{ item.id }}"',
+        'action="{{ url_for(\\'approve_item\\', item_id=item.id) }}"'
+    )
+    _admin_html = _admin_html.replace(
+        'action="/admin/reject_item/{{ item.id }}"',
+        'action="{{ url_for(\\'reject_item\\', item_id=item.id) }}"'
+    )
+    _admin_html = _admin_html.replace(
+        'action="/admin/approve_category/{{ cat.id }}"',
+        'action="{{ url_for(\\'approve_category\\', cat_id=cat.id) }}"'
+    )
+    _admin_html = _admin_html.replace(
+        'action="/admin/reject_category/{{ cat.id }}"',
+        'action="{{ url_for(\\'reject_category\\', cat_id=cat.id) }}"'
+    )
+    _admin_dashboard_path.write_text(_admin_html, encoding="utf-8")
+
 # A compact desktop/tablet navbar plus a thumb-friendly phone bottom bar.
 _navbar_path = _templates_dir / "navbar.html"
 _navbar_path.write_text(r'''<nav class="navbar navbar-expand-lg sticky-top easy-navbar">
@@ -1822,6 +1844,92 @@ spec.loader.exec_module(module)
 
 # Vercel detects this top-level Flask object.
 app = module.app
+
+# ---------------------------------------------------------------------------
+# Admin moderation route compatibility
+# ---------------------------------------------------------------------------
+# Some recovered deployments exposed the admin dashboard template while the
+# matching action rules were absent from Flask's URL map. Guarantee that the
+# moderation endpoints always exist. Existing routes are left untouched.
+from flask import session as _flask_session, redirect as _redirect, url_for as _url_for, flash as _flash
+
+_existing_endpoints = {rule.endpoint for rule in app.url_map.iter_rules()}
+
+if 'approve_item' not in _existing_endpoints:
+    def _approve_item_compat(item_id):
+        if not _flask_session.get('admin_logged_in'):
+            return _redirect(_url_for('admin_login'))
+        item = module.db.session.get(module.Item, item_id)
+        if item is None:
+            return ("Item not found", 404)
+        item.approval_status = 'approved'
+        module.db.session.commit()
+        _flash('Item approved and now visible in the marketplace and user dashboards.')
+        return _redirect(_url_for('admin_dashboard'))
+
+    app.add_url_rule(
+        '/admin/approve_item/<int:item_id>',
+        endpoint='approve_item',
+        view_func=_approve_item_compat,
+        methods=['POST'],
+    )
+
+if 'reject_item' not in _existing_endpoints:
+    def _reject_item_compat(item_id):
+        if not _flask_session.get('admin_logged_in'):
+            return _redirect(_url_for('admin_login'))
+        item = module.db.session.get(module.Item, item_id)
+        if item is None:
+            return ("Item not found", 404)
+        item.approval_status = 'rejected'
+        module.db.session.commit()
+        _flash('Item rejected.')
+        return _redirect(_url_for('admin_dashboard'))
+
+    app.add_url_rule(
+        '/admin/reject_item/<int:item_id>',
+        endpoint='reject_item',
+        view_func=_reject_item_compat,
+        methods=['POST'],
+    )
+
+if 'approve_category' not in _existing_endpoints:
+    def _approve_category_compat(cat_id):
+        if not _flask_session.get('admin_logged_in'):
+            return _redirect(_url_for('admin_login'))
+        category = module.db.session.get(module.Category, cat_id)
+        if category is None:
+            return ("Category not found", 404)
+        category.approval_status = 'approved'
+        module.db.session.commit()
+        _flash('Category approved.')
+        return _redirect(_url_for('admin_dashboard'))
+
+    app.add_url_rule(
+        '/admin/approve_category/<int:cat_id>',
+        endpoint='approve_category',
+        view_func=_approve_category_compat,
+        methods=['POST'],
+    )
+
+if 'reject_category' not in _existing_endpoints:
+    def _reject_category_compat(cat_id):
+        if not _flask_session.get('admin_logged_in'):
+            return _redirect(_url_for('admin_login'))
+        category = module.db.session.get(module.Category, cat_id)
+        if category is None:
+            return ("Category not found", 404)
+        category.approval_status = 'rejected'
+        module.db.session.commit()
+        _flash('Category rejected.')
+        return _redirect(_url_for('admin_dashboard'))
+
+    app.add_url_rule(
+        '/admin/reject_category/<int:cat_id>',
+        endpoint='reject_category',
+        view_func=_reject_category_compat,
+        methods=['POST'],
+    )
 
 # Safe production database startup.
 # IMPORTANT: deployments must never delete, drop, truncate, recreate, or reset
