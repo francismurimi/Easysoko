@@ -98,6 +98,39 @@ _source = _source.replace(
     1,
 )
 
+_source = _source.replace(
+    "import re",
+    "import re\nimport secrets\nfrom authlib.integrations.flask_client import OAuth\nfrom werkzeug.middleware.proxy_fix import ProxyFix",
+    1,
+)
+
+_oauth_setup_anchor = """login_manager.login_view = 'login'"""
+_oauth_setup = """login_manager.login_view = 'login'
+
+# Respect Vercel's forwarded HTTPS host/scheme when generating OAuth callbacks.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '').strip()
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '').strip()
+GOOGLE_AUTH_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+oauth = OAuth(app)
+if GOOGLE_AUTH_ENABLED:
+    oauth.register(
+        name='google',
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+        client_kwargs={'scope': 'openid email profile'},
+    )
+
+@app.context_processor
+def inject_google_auth_enabled():
+    return {'google_auth_enabled': GOOGLE_AUTH_ENABLED}
+"""
+if _oauth_setup_anchor in _source:
+    _source = _source.replace(_oauth_setup_anchor, _oauth_setup, 1)
+
 _old_secret = "app.secret_key = os.environ.get('EASY_SOKO_SECRET_KEY', 'dev-change-this-secret')"
 _new_secret = """app.secret_key = os.environ.get('EASY_SOKO_SECRET_KEY', 'dev-change-this-secret')
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -160,6 +193,121 @@ def login():
     return render_template('login.html')"""
 if _old_login in _source:
     _source = _source.replace(_old_login, _new_login, 1)
+
+_google_routes_anchor = """@app.route('/signup', methods=['GET', 'POST'])"""
+_google_routes = """@app.route('/auth/google')
+def google_auth():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+    if not GOOGLE_AUTH_ENABLED:
+        flash('Google sign-in is not configured yet. Please create an account with email and password.')
+        return redirect(url_for('signup'))
+
+    redirect_uri = os.environ.get('GOOGLE_REDIRECT_URI', '').strip()
+    if not redirect_uri:
+        redirect_uri = url_for('google_callback', _external=True)
+    return oauth.google.authorize_redirect(redirect_uri)
+
+
+@app.route('/auth/google/callback')
+def google_callback():
+    if not GOOGLE_AUTH_ENABLED:
+        flash('Google sign-in is not configured yet.')
+        return redirect(url_for('login'))
+
+    try:
+        token = oauth.google.authorize_access_token()
+        userinfo = token.get('userinfo')
+        if not userinfo:
+            userinfo = oauth.google.userinfo()
+    except Exception:
+        app.logger.exception('Google OAuth callback failed')
+        flash('Google sign-in could not be completed. Please try again.')
+        return redirect(url_for('login'))
+
+    email = (userinfo.get('email') or '').strip().lower()
+    if not email or not userinfo.get('email_verified', False):
+        flash('Google did not provide a verified email address.')
+        return redirect(url_for('login'))
+
+    existing_user = User.query.filter(db.func.lower(User.email) == email).first()
+    if existing_user:
+        login_user(existing_user, remember=True, duration=timedelta(days=30), fresh=True)
+        session.permanent = True
+        session.modified = True
+        return redirect(url_for('dashboard'))
+
+    session['google_signup'] = {
+        'email': email,
+        'first_name': (userinfo.get('given_name') or userinfo.get('name') or 'Google').strip(),
+        'last_name': (userinfo.get('family_name') or 'User').strip(),
+        'picture': (userinfo.get('picture') or '').strip(),
+    }
+    return redirect(url_for('google_complete_profile'))
+
+
+@app.route('/auth/google/complete', methods=['GET', 'POST'])
+def google_complete_profile():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+
+    google_profile = session.get('google_signup')
+    if not google_profile:
+        flash('Start with Google sign-in first.')
+        return redirect(url_for('signup'))
+
+    if request.method == 'POST':
+        try:
+            age = int(request.form.get('age', '0'))
+        except ValueError:
+            age = 0
+
+        if age < 13 or age > 120:
+            flash('Age must be between 13 and 120.')
+            return render_template('google_complete.html', profile=google_profile)
+
+        email = google_profile['email']
+        if User.query.filter(db.func.lower(User.email) == email).first():
+            flash('This email already has an Easy Soko account. Sign in with Google.')
+            session.pop('google_signup', None)
+            return redirect(url_for('login'))
+
+        base_username = re.sub(r'[^A-Za-z0-9_.-]', '', email.split('@')[0])[:60] or 'user'
+        username = base_username
+        suffix = 1
+        while User.query.filter_by(username=username).first():
+            suffix += 1
+            username = f"{base_username}{suffix}"
+
+        first_name = google_profile.get('first_name') or 'Google'
+        last_name = google_profile.get('last_name') or 'User'
+
+        new_user = User(
+            username=username,
+            email=email,
+            password=secrets.token_urlsafe(32),
+            first_name=first_name,
+            last_name=last_name,
+            sir_name=last_name,
+            age=age,
+            profile_picture=google_profile.get('picture') or None,
+        )
+        db.session.add(new_user)
+        db.session.commit()
+
+        session.pop('google_signup', None)
+        login_user(new_user, remember=True, duration=timedelta(days=30), fresh=True)
+        session.permanent = True
+        session.modified = True
+        flash('Your Easy Soko account was created with Google.')
+        return redirect(url_for('dashboard'))
+
+    return render_template('google_complete.html', profile=google_profile)
+
+
+@app.route('/signup', methods=['GET', 'POST'])"""
+if _google_routes_anchor in _source:
+    _source = _source.replace(_google_routes_anchor, _google_routes, 1)
 
 _old_signup_start = """@app.route('/signup', methods=['GET', 'POST'])
 def signup():
@@ -728,6 +876,126 @@ if _dashboard_path.exists():
         )
 
     _dashboard_path.write_text(_dashboard_html, encoding="utf-8")
+
+
+# Login/signup UX and optional Google OAuth.
+_easy_patch_template("login.html", [
+    (
+        "<h2>Login</h2>",
+        """<div class="easy-auth-heading text-center">
+        <h2 class="mb-2">Welcome back</h2>
+        <p class="text-muted mb-3">Sign in to continue to Easy Soko.</p>
+        {% if google_auth_enabled %}
+        <a href="/auth/google" class="btn btn-light border easy-google-btn w-100 mb-3">
+            <span class="easy-google-mark">G</span> Continue with Google
+        </a>
+        <div class="easy-auth-divider"><span>or</span></div>
+        {% endif %}
+    </div>"""
+    ),
+    (
+        """<a href="/signup" class="btn btn-link w-100">Sign Up</a>""",
+        """<div class="easy-auth-switch mt-3 text-center">
+            <span>Don't have an account?</span>
+            <a href="/signup" class="fw-bold">Create your Easy Soko account</a>
+        </div>"""
+    ),
+    (
+        """<label for="username" class="form-label">Username</label>""",
+        """<label for="username" class="form-label">Username or email</label>"""
+    ),
+])
+
+_easy_patch_template("signup.html", [
+    (
+        "<h2>Sign Up</h2>",
+        """<div class="easy-auth-heading text-center">
+        <h2 class="mb-2">Create your account</h2>
+        <p class="text-muted mb-3">Join Easy Soko to buy, sell and manage your marketplace activity.</p>
+        {% if google_auth_enabled %}
+        <a href="/auth/google" class="btn btn-light border easy-google-btn w-100 mb-3">
+            <span class="easy-google-mark">G</span> Sign up with Google
+        </a>
+        <div class="easy-auth-divider"><span>or create with email</span></div>
+        {% endif %}
+    </div>"""
+    ),
+    (
+        """<a href="/login" class="btn btn-link w-100">Already have an account? Login</a>""",
+        """<div class="easy-auth-switch mt-3 text-center">
+            Already have an account? <a href="/login" class="fw-bold">Sign in</a>
+        </div>"""
+    ),
+])
+
+_google_complete_path = _templates_dir / "google_complete.html"
+_google_complete_path.write_text(r'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Finish Google Sign Up - Easy Soko</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+{% include 'navbar.html' %}
+<div class="easy-page-shell">
+    <div class="container mt-4 easy-auth-card" style="max-width:520px;">
+        <div class="text-center mb-4">
+            {% if profile.picture %}
+            <img src="{{ profile.picture }}" alt="" class="rounded-circle mb-3" width="72" height="72">
+            {% endif %}
+            <h2>Almost done</h2>
+            <p class="text-muted mb-1">{{ profile.first_name }} {{ profile.last_name }}</p>
+            <p class="text-muted small">{{ profile.email }}</p>
+        </div>
+
+        <form method="post">
+            <div class="mb-3">
+                <label class="form-label" for="age">Age</label>
+                <input class="form-control" id="age" name="age" type="number" min="13" max="120" required>
+                <div class="form-text">Easy Soko requires users to be at least 13 years old.</div>
+            </div>
+            <button class="btn btn-primary w-100" type="submit">Create account & continue</button>
+        </form>
+
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="alert alert-warning mt-3">{{ messages[0] }}</div>
+          {% endif %}
+        {% endwith %}
+    </div>
+</div>
+<footer class="footer py-3">
+  <div class="container text-center">
+    <span class="text-muted">&copy; 2026 Easy Soko. <a href="/contact">Contact/About</a></span>
+  </div>
+</footer>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>''', encoding="utf-8")
+
+# Structural footer fix: all normal pages get a content shell that grows to fill
+# the viewport, so the footer cannot float in the middle of a short screen.
+for _layout_file in _templates_dir.glob("*.html"):
+    _layout_html = _layout_file.read_text(encoding="utf-8")
+    if (
+        "<footer class=\"footer" in _layout_html
+        and "{% include 'navbar.html' %}" in _layout_html
+        and 'class="easy-page-shell"' not in _layout_html
+    ):
+        _layout_html = _layout_html.replace(
+            "{% include 'navbar.html' %}",
+            "{% include 'navbar.html' %}\n<div class=\"easy-page-shell\">",
+            1,
+        )
+        _layout_html = _layout_html.replace(
+            '<footer class="footer',
+            '</div>\n<footer class="footer',
+            1,
+        )
+        _layout_file.write_text(_layout_html, encoding="utf-8")
 
 
 # A compact desktop/tablet navbar plus a thumb-friendly phone bottom bar.
@@ -1347,6 +1615,177 @@ th {
     .easy-ad-card-image,
     .easy-market-card-image {
         height: 180px;
+    }
+}
+
+/* EASY_SOKO_AUTH_MOBILE_FOOTER_V2 */
+html,
+body {
+    min-height: 100%;
+}
+
+body {
+    min-height: 100vh !important;
+    min-height: 100dvh !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+.easy-page-shell {
+    flex: 1 0 auto;
+    width: 100%;
+    display: block;
+}
+
+.footer {
+    position: relative !important;
+    inset: auto !important;
+    margin-top: auto !important;
+    flex: 0 0 auto;
+    width: 100%;
+}
+
+.easy-auth-heading {
+    margin-bottom: .5rem;
+}
+
+.easy-google-btn {
+    min-height: 50px;
+    font-weight: 700;
+    background: #fff;
+}
+
+.easy-google-mark {
+    display: inline-flex;
+    width: 26px;
+    height: 26px;
+    align-items: center;
+    justify-content: center;
+    margin-right: .5rem;
+    border-radius: 50%;
+    font-weight: 800;
+    font-size: 1.05rem;
+}
+
+.easy-auth-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #6c757d;
+    font-size: .88rem;
+    margin: .25rem 0 1rem;
+}
+
+.easy-auth-divider::before,
+.easy-auth-divider::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: rgba(0,0,0,.12);
+}
+
+.easy-auth-switch {
+    padding: 12px;
+    border-radius: 12px;
+    background: rgba(83,223,209,.10);
+}
+
+@media (max-width: 767.98px) {
+    body {
+        font-size: 17px !important;
+        line-height: 1.5;
+    }
+
+    .brand-text {
+        font-size: 1.75rem !important;
+    }
+
+    .container,
+    section.container {
+        padding: 20px !important;
+    }
+
+    h1 {
+        font-size: 2rem !important;
+    }
+
+    h2 {
+        font-size: 1.7rem !important;
+    }
+
+    h3 {
+        font-size: 1.42rem !important;
+    }
+
+    h5,
+    .card-title {
+        font-size: 1.16rem !important;
+    }
+
+    .card-text,
+    .form-label,
+    .list-group-item,
+    .alert {
+        font-size: 1rem !important;
+    }
+
+    .form-control,
+    .form-select {
+        min-height: 54px !important;
+        font-size: 17px !important;
+        padding: .75rem .9rem !important;
+    }
+
+    textarea.form-control {
+        min-height: 125px !important;
+    }
+
+    .btn {
+        min-height: 52px !important;
+        font-size: 1.02rem !important;
+        font-weight: 700;
+        padding: .7rem 1rem !important;
+    }
+
+    .card-body {
+        padding: 18px !important;
+    }
+
+    .card-img-top,
+    .easy-ad-card-image,
+    .easy-market-card-image {
+        height: 210px !important;
+    }
+
+    :root {
+        --easy-mobile-nav-h: 78px;
+    }
+
+    .easy-mobile-nav {
+        min-height: 76px !important;
+    }
+
+    .easy-mobile-nav a {
+        min-height: 68px !important;
+        font-size: .76rem !important;
+    }
+
+    .easy-mobile-icon {
+        font-size: 1.45rem !important;
+    }
+
+    .footer {
+        padding-top: 16px !important;
+        padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important;
+    }
+
+    .footer .container {
+        font-size: .92rem !important;
+    }
+
+    .easy-auth-card,
+    .easy-auth-heading {
+        font-size: 1rem;
     }
 }
 
