@@ -1004,19 +1004,19 @@ if _admin_dashboard_path.exists():
     _admin_html = _admin_dashboard_path.read_text(encoding="utf-8")
     _admin_html = _admin_html.replace(
         'action="/admin/approve_item/{{ item.id }}"',
-        'action="{{ url_for(\\'approve_item\\', item_id=item.id) }}"'
+        "action=\"{{ url_for('approve_item', item_id=item.id) }}\""
     )
     _admin_html = _admin_html.replace(
         'action="/admin/reject_item/{{ item.id }}"',
-        'action="{{ url_for(\\'reject_item\\', item_id=item.id) }}"'
+        "action=\"{{ url_for('reject_item', item_id=item.id) }}\""
     )
     _admin_html = _admin_html.replace(
         'action="/admin/approve_category/{{ cat.id }}"',
-        'action="{{ url_for(\\'approve_category\\', cat_id=cat.id) }}"'
+        "action=\"{{ url_for('approve_category', cat_id=cat.id) }}\""
     )
     _admin_html = _admin_html.replace(
         'action="/admin/reject_category/{{ cat.id }}"',
-        'action="{{ url_for(\\'reject_category\\', cat_id=cat.id) }}"'
+        "action=\"{{ url_for('reject_category', cat_id=cat.id) }}\""
     )
     _admin_dashboard_path.write_text(_admin_html, encoding="utf-8")
 
