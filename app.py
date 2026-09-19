@@ -2089,6 +2089,7 @@ from werkzeug.security import generate_password_hash as _generate_password_hash,
 from sqlalchemy.exc import IntegrityError as _IntegrityError
 from hmac import compare_digest as _compare_digest
 from datetime import timedelta as _timedelta
+import re as _re
 
 _BUILD_VERSION = "2026-09-19-r3"
 
@@ -2179,7 +2180,7 @@ def _live_signup():
             _flash('Age must be between 13 and 120.')
             return _render_template('signup.html')
 
-        if len(password) < 10 or not re.search(r'[A-Z]', password) or not re.search(r'[a-z]', password) or not re.search(r'\d', password) or not re.search(r'[^A-Za-z0-9]', password):
+        if len(password) < 10 or not _re.search(r'[A-Z]', password) or not _re.search(r'[a-z]', password) or not _re.search(r'\d', password) or not _re.search(r'[^A-Za-z0-9]', password):
             _flash('Password must be at least 10 characters and include uppercase, lowercase, a number, and a special character.')
             return _render_template('signup.html')
 
@@ -2331,6 +2332,32 @@ def _live_reject_item(item_id):
     return _redirect(_url_for('admin_dashboard'))
 
 app.view_functions['reject_item'] = _live_reject_item
+
+def _moderation_get_fallback(item_id):
+    if not _flask_session.get('admin_logged_in'):
+        return _redirect(_url_for('admin_login'))
+    _flash('Use the Approve or Reject button on the Admin Dashboard to change a product status.')
+    return _redirect(_url_for('admin_dashboard'))
+
+_existing_rule_methods = {
+    (rule.rule, method)
+    for rule in app.url_map.iter_rules()
+    for method in rule.methods
+}
+if ('/admin/approve_item/<int:item_id>', 'GET') not in _existing_rule_methods:
+    app.add_url_rule(
+        '/admin/approve_item/<int:item_id>',
+        endpoint='approve_item_get',
+        view_func=_moderation_get_fallback,
+        methods=['GET'],
+    )
+if ('/admin/reject_item/<int:item_id>', 'GET') not in _existing_rule_methods:
+    app.add_url_rule(
+        '/admin/reject_item/<int:item_id>',
+        endpoint='reject_item_get',
+        view_func=_moderation_get_fallback,
+        methods=['GET'],
+    )
 
 if 'healthz' not in {rule.endpoint for rule in app.url_map.iter_rules()}:
     @app.route('/healthz', endpoint='healthz')
